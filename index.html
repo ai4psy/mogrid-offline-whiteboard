@@ -1,0 +1,1729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 安全策略：禁止任何网络请求与外部脚本，只允许本文件内联的代码运行 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>墨格 MoGrid · 轻量架构白板（离线单文件）</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --panel: #ffffff;
+    --line: #e4e7ef;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --brand: #4f6bed;
+    --brand-soft: #eef1ff;
+    --danger: #d9435a;
+    --ok: #2f9e66;
+    --radius: 12px;
+    --shadow: 0 6px 24px rgba(20, 28, 60, .08), 0 1px 3px rgba(20, 28, 60, .06);
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--font); color: var(--text); background: var(--bg);
+    display: flex; flex-direction: column; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  svg.icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    height: 56px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand-name { font-weight: 700; font-size: 17px; letter-spacing: .5px; white-space: nowrap; }
+  .brand-sub { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .local-badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ok);
+    background: #ebf8f1; border: 1px solid #c9ecd9; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  }
+  .local-badge svg.icon { width: 13px; height: 13px; }
+  .save-status { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  .save-status.error { color: var(--danger); }
+  .spacer { flex: 1; }
+  .actions { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .actions::-webkit-scrollbar { display: none; }
+  .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; flex: none; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px;
+    border: 1px solid transparent; border-radius: 9px; background: transparent; cursor: pointer;
+    font-size: 13px; white-space: nowrap; flex: none;
+  }
+  .btn:hover { background: #f1f3f8; }
+  .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+  .btn:disabled { opacity: .38; cursor: not-allowed; background: transparent; }
+  .btn.primary { background: var(--brand); color: #fff; }
+  .btn.primary:hover { background: #3f59d6; }
+  .btn.danger { color: var(--danger); }
+  .btn.danger.solid { background: var(--danger); color: #fff; }
+  .btn.outline { border-color: var(--line); background: #fff; }
+
+  /* ---------- 主区域 ---------- */
+  .main { flex: 1; display: flex; min-height: 0; position: relative; }
+  .stage { flex: 1; position: relative; min-width: 0; overflow: hidden; }
+  #board {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    touch-action: none; user-select: none; -webkit-user-select: none; cursor: default;
+  }
+  #board.panning { cursor: grabbing; }
+  #board.connect-mode { cursor: crosshair; }
+  #board.connect-mode .node { cursor: pointer; }
+  .node { cursor: grab; }
+  .node.dragging { cursor: grabbing; }
+  .edge { cursor: pointer; }
+  .edge-hit { stroke: transparent; stroke-width: 16; fill: none; pointer-events: stroke; }
+  .edge-line { fill: none; stroke: #7b8499; stroke-width: 1.8; }
+  .edge-head { fill: #7b8499; }
+  .edge:hover .edge-line { stroke: #4b5468; }
+  .edge:hover .edge-head { fill: #4b5468; }
+  .edge.selected .edge-line { stroke: var(--brand); stroke-width: 2.4; }
+  .edge.selected .edge-head { fill: var(--brand); }
+  .rubber { stroke: var(--brand); stroke-width: 1.6; stroke-dasharray: 6 5; fill: none; pointer-events: none; }
+
+  /* 左侧工具条 */
+  .toolrail {
+    position: absolute; left: 14px; top: 14px; display: flex; flex-direction: column; gap: 4px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 6px; box-shadow: var(--shadow); z-index: 3;
+  }
+  .tool {
+    width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; border: 0;
+    background: transparent; cursor: pointer; position: relative;
+  }
+  .tool:hover { background: #f1f3f8; }
+  .tool.active { background: var(--brand-soft); color: var(--brand); }
+  .tool:disabled { opacity: .35; cursor: not-allowed; }
+  .tool .key { position: absolute; right: 3px; bottom: 1px; font-size: 9px; color: var(--muted); }
+  .tool:focus-visible { outline: 2px solid var(--brand); }
+
+  /* 底部缩放与提示 */
+  .zoombar {
+    position: absolute; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 2px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; box-shadow: var(--shadow); z-index: 3;
+  }
+  .zoombar .btn { height: 30px; padding: 0 8px; }
+  #zoom-label { min-width: 48px; justify-content: center; font-variant-numeric: tabular-nums; }
+  .hint {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: calc(100% - 260px);
+    background: rgba(31, 41, 55, .86); color: #fff; font-size: 12.5px; padding: 7px 14px; border-radius: 999px;
+    pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 2;
+  }
+  .hint:empty { display: none; }
+
+  /* ---------- 右侧属性面板 ---------- */
+  .inspector {
+    width: 300px; flex: none; background: var(--panel); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0; z-index: 4;
+  }
+  .inspector-head {
+    display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px;
+    font-weight: 600; font-size: 14px; border: 0; background: none; width: 100%; text-align: left;
+  }
+  .inspector-head .chev { display: none; }
+  .inspector-body { padding: 0 16px 16px; overflow-y: auto; flex: 1; }
+  .field { margin-bottom: 14px; }
+  .field label, .field .label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .field input[type=text], .field textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font-size: 14px; background: #fbfcfe;
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .field textarea { min-height: 96px; resize: vertical; line-height: 1.55; }
+  .field input[type=text]:focus, .field textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(79, 107, 237, .15); background: #fff; }
+  .field input[type=range] { width: 100%; accent-color: var(--brand); }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch { width: 28px; height: 28px; border-radius: 8px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+  .swatch.active { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--brand); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  .card { background: #f8f9fc; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .card b { font-weight: 600; color: var(--text); }
+  .kbd { display: inline-block; font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: #fff; color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .pair { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0 10px; flex-wrap: wrap; }
+  .pair .chip { background: var(--brand-soft); color: var(--brand); border-radius: 6px; padding: 2px 8px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hidden { display: none !important; }
+
+  /* ---------- 弹窗与提示 ---------- */
+  .modal-mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .35); display: grid; place-items: center; z-index: 20; padding: 16px; }
+  .modal { background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(15, 23, 42, .25); width: min(440px, 100%); max-height: 86vh; overflow: auto; padding: 20px 22px; }
+  .modal h2 { margin: 0 0 10px; font-size: 17px; }
+  .modal p { margin: 0 0 10px; color: #475063; font-size: 14px; line-height: 1.7; }
+  .modal .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .shortcuts { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .shortcuts td { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .shortcuts td:last-child { text-align: right; }
+  .toasts { position: fixed; top: 66px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 30; pointer-events: none; width: max-content; max-width: calc(100% - 24px); }
+  .toast { background: #1f2937; color: #fff; font-size: 13px; padding: 9px 14px; border-radius: 10px; box-shadow: var(--shadow); line-height: 1.5; animation: pop .18s ease-out; }
+  .toast.error { background: var(--danger); }
+  .toast.ok { background: #237a50; }
+  @keyframes pop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .drop-overlay { position: absolute; inset: 10px; border: 2px dashed var(--brand); border-radius: 16px; background: rgba(79, 107, 237, .06); display: grid; place-items: center; color: var(--brand); font-weight: 600; z-index: 6; pointer-events: none; }
+
+  /* ---------- 手机 / 窄屏 ---------- */
+  @media (max-width: 760px) {
+    .topbar { height: auto; flex-wrap: wrap; padding: 8px 10px; gap: 6px 10px; }
+    .brand-sub, .save-status, .btn .label { display: none; }
+    .actions { width: 100%; order: 3; }
+    .btn { padding: 0 9px; }
+    .toolrail { left: 8px; top: 8px; }
+    .tool { width: 38px; height: 38px; }
+    .hint { bottom: 64px; max-width: calc(100% - 24px); white-space: normal; text-align: center; border-radius: 12px; }
+    .zoombar { right: 8px; bottom: 8px; }
+    .inspector {
+      position: absolute; left: 0; right: 0; bottom: 0; width: auto; max-height: 62%;
+      border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 30px rgba(20, 28, 60, .12);
+      transform: translateY(calc(100% - 46px)); transition: transform .22s ease;
+    }
+    .inspector.open { transform: none; }
+    .inspector-head { cursor: pointer; padding: 12px 16px; }
+    .inspector-head .chev { display: inline; color: var(--muted); font-weight: 400; font-size: 12px; }
+    .zoombar, .hint { margin-bottom: 46px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <!-- 自绘标志：两个方块与一条箭头 -->
+    <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1" y="1" width="30" height="30" rx="9" fill="#4f6bed"/>
+      <rect x="6.5" y="8" width="8" height="8" rx="2.2" fill="#fff"/>
+      <rect x="17.5" y="16" width="8" height="8" rx="2.2" fill="#c9d3ff"/>
+      <path d="M14.5 12h3.5a3.5 3.5 0 0 1 3.5 3.5V16" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <div class="brand-name">墨格 MoGrid</div>
+      <div class="brand-sub">轻量架构白板 · 离线单文件</div>
+    </div>
+  </div>
+  <span class="local-badge" title="所有数据只保存在当前浏览器的 localStorage，不会上传到任何服务器">
+    <svg class="icon" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+    仅存本机 · 不联网
+  </span>
+  <span class="save-status" id="save-status" role="status" aria-live="polite">尚未保存</span>
+  <div class="spacer"></div>
+  <nav class="actions" aria-label="主要操作">
+    <button class="btn" id="btn-undo" data-tip="撤销" aria-label="撤销"><svg class="icon" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button class="btn" id="btn-redo" data-tip="重做" aria-label="重做"><svg class="icon" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+    <span class="sep"></span>
+    <button class="btn" id="btn-import" title="从 JSON 文件导入（会替换当前画布，可撤销）"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20V9"/><path d="m7 14 5-5 5 5"/><path d="M5 4h14"/></svg><span class="label">导入 JSON</span></button>
+    <button class="btn" id="btn-export-json" title="导出为 JSON 文件"><svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg><span class="label">导出 JSON</span></button>
+    <button class="btn primary" id="btn-export-png" title="导出为 PNG 图片（2 倍清晰度）"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m21 16-5-5-9 8"/></svg><span class="label">导出 PNG</span></button>
+    <span class="sep"></span>
+    <button class="btn" id="btn-sample" title="载入示例场景（可撤销）"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg><span class="label">示例</span></button>
+    <button class="btn danger" id="btn-clear" title="清空画布（需二次确认）"><svg class="icon" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 16 16 7l3 3-9 9H7z"/></svg><span class="label">清空</span></button>
+    <button class="btn" id="btn-help" title="帮助与快捷键 (?)" aria-label="帮助"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.6-2.5 2-2.5 3.6"/><path d="M12 17h.01"/></svg></button>
+  </nav>
+  <input type="file" id="file-input" accept=".json,application/json" class="hidden">
+</header>
+
+<div class="main">
+  <section class="stage" id="stage" aria-label="画布">
+    <svg id="board" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="架构图画布">
+      <defs>
+        <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+          <circle cx="1.2" cy="1.2" r="1.2" fill="#d5d9e4"/>
+        </pattern>
+        <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="160%">
+          <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#141c3c" flood-opacity=".09"/>
+        </filter>
+      </defs>
+      <rect id="grid" width="100%" height="100%" fill="url(#dots)"/>
+      <g id="viewport">
+        <g id="edges-layer"></g>
+        <g id="nodes-layer"></g>
+        <line id="rubber" class="rubber hidden"/>
+      </g>
+    </svg>
+
+    <div class="toolrail" role="toolbar" aria-label="绘图工具">
+      <button class="tool" id="tool-select" title="选择 / 拖动 (V)" aria-label="选择工具"><svg class="icon" viewBox="0 0 24 24"><path d="m5 3 13 7-6 1.8L9.5 18z"/></svg><span class="key">V</span></button>
+      <button class="tool" id="tool-add" title="新增节点 (N)" aria-label="新增节点"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M12 8.5v7M8.5 12h7"/></svg><span class="key">N</span></button>
+      <button class="tool" id="tool-connect" title="连线 (L)：已选两个节点时直接连接；否则依次点击起点和终点" aria-label="连线工具"><svg class="icon" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><path d="M7.8 16.2 18 6"/><path d="M12.5 6H18v5.5"/></svg><span class="key">L</span></button>
+      <button class="tool" id="tool-delete" title="删除所选 (Delete)" aria-label="删除所选"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg></button>
+    </div>
+
+    <div class="hint" id="hint" aria-live="polite"></div>
+
+    <div class="zoombar">
+      <button class="btn" id="zoom-out" title="缩小" aria-label="缩小"><svg class="icon" viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <button class="btn" id="zoom-label" title="重置为 100%">100%</button>
+      <button class="btn" id="zoom-in" title="放大" aria-label="放大"><svg class="icon" viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg></button>
+      <button class="btn" id="zoom-fit" title="适应画布 (F)" aria-label="适应画布"><svg class="icon" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+    </div>
+    <div class="drop-overlay hidden" id="drop-overlay">松开以导入 JSON</div>
+  </section>
+
+  <aside class="inspector" id="inspector" aria-label="属性面板">
+    <button class="inspector-head" id="inspector-head" type="button"><span id="inspector-title">画布</span><span class="chev">点此展开 / 收起</span></button>
+    <div class="inspector-body">
+      <!-- 未选择 -->
+      <div id="panel-none">
+        <div class="card muted" id="scene-stats"></div>
+        <div class="card muted">
+          <b>本地存储说明</b><br>
+          画布会自动保存到<b>当前浏览器</b>的 localStorage（键名 <span class="kbd">mogrid.scene.v1</span>）。不上传、不联网、无统计代码。换浏览器或清除站点数据会丢失，请定期“导出 JSON”备份。
+        </div>
+        <div class="card muted">
+          <b>上手三步</b><br>
+          1. 按 <span class="kbd">N</span> 新增节点，在右侧编辑标题与说明；<br>
+          2. 按住 <span class="kbd">Shift</span> 依次点选两个节点，按 <span class="kbd">L</span> 生成箭头（先选的是起点）；<br>
+          3. 拖动节点，连线会自动跟随。拖动空白处可平移画布。
+        </div>
+      </div>
+      <!-- 单个节点 -->
+      <div id="panel-node" class="hidden">
+        <div class="field">
+          <label for="node-title"><span>标题</span><span id="title-count"></span></label>
+          <input type="text" id="node-title" maxlength="60" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="node-desc"><span>说明（可换行）</span><span id="desc-count"></span></label>
+          <textarea id="node-desc" maxlength="400" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <div class="label"><span>颜色</span></div>
+          <div class="swatches" id="swatches"></div>
+        </div>
+        <div class="field">
+          <label for="node-width"><span>宽度</span><span id="width-value"></span></label>
+          <input type="range" id="node-width" min="140" max="360" step="10">
+        </div>
+        <p class="muted">标题最多显示 2 行、说明最多 5 行，超出部分以“…”省略（完整内容仍保存在数据里，鼠标悬停可查看）。</p>
+        <div class="row"><button class="btn outline danger" id="node-delete"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></svg>删除节点</button></div>
+      </div>
+      <!-- 两个节点 -->
+      <div id="panel-pair" class="hidden">
+        <p class="muted">已选择两个节点。连线方向由选择顺序决定：</p>
+        <div class="pair"><span class="chip" id="pair-a"></span>→<span class="chip" id="pair-b"></span></div>
+        <div class="row">
+          <button class="btn primary" id="pair-connect"><svg class="icon" viewBox="0 0 24 24"><path d="M5 12h13"/><path d="m13 7 5 5-5 5"/></svg>添加连线 (L)</button>
+          <button class="btn outline" id="pair-swap">交换方向</button>
+        </div>
+      </div>
+      <!-- 多个节点 -->
+      <div id="panel-multi" class="hidden">
+        <p class="muted" id="multi-text"></p>
+        <div class="row"><button class="btn outline danger" id="multi-delete">删除所选节点</button></div>
+      </div>
+      <!-- 连线 -->
+      <div id="panel-edge" class="hidden">
+        <div class="pair"><span class="chip" id="edge-a"></span>→<span class="chip" id="edge-b"></span></div>
+        <div class="field">
+          <label for="edge-label"><span>连线文字（可选）</span><span id="label-count"></span></label>
+          <input type="text" id="edge-label" maxlength="30" autocomplete="off" placeholder="例如：调用 / 推送">
+        </div>
+        <div class="row">
+          <button class="btn outline" id="edge-reverse">反转方向</button>
+          <button class="btn outline danger" id="edge-delete">删除连线</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- 通用确认弹窗 -->
+<div class="modal-mask hidden" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <div class="footer">
+      <button class="btn outline" id="confirm-cancel">取消</button>
+      <button class="btn danger solid" id="confirm-ok">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- 帮助弹窗 -->
+<div class="modal-mask hidden" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="modal">
+    <h2 id="help-title">墨格 MoGrid · 帮助</h2>
+    <p>一个可离线运行的单文件架构图白板：矩形节点 + 箭头连线，适合快速画 AI 应用的数据流示意图。</p>
+    <table class="shortcuts">
+      <tr><td>新增节点</td><td><span class="kbd">N</span> 或双击空白处</td></tr>
+      <tr><td>多选（决定连线顺序）</td><td><span class="kbd">Shift</span> + 点击</td></tr>
+      <tr><td>连线 / 连线模式</td><td><span class="kbd">L</span></td></tr>
+      <tr><td>删除所选</td><td><span class="kbd">Delete</span> / <span class="kbd">Backspace</span></td></tr>
+      <tr><td>撤销</td><td><span class="kbd mod">Ctrl</span> + <span class="kbd">Z</span></td></tr>
+      <tr><td>重做</td><td><span class="kbd mod">Ctrl</span> + <span class="kbd">Shift</span> + <span class="kbd">Z</span></td></tr>
+      <tr><td>全选</td><td><span class="kbd mod">Ctrl</span> + <span class="kbd">A</span></td></tr>
+      <tr><td>适应画布</td><td><span class="kbd">F</span></td></tr>
+      <tr><td>平移 / 缩放</td><td>拖动空白处 · 滚轮平移 · <span class="kbd mod">Ctrl</span>+滚轮或双指缩放</td></tr>
+      <tr><td>退出模式 / 取消选择</td><td><span class="kbd">Esc</span></td></tr>
+    </table>
+    <p style="margin-top:14px">数据只保存在本机浏览器的 localStorage；页面不发起任何网络请求，没有统计或追踪代码。</p>
+    <p>交互思路受开源白板项目 Excalidraw 启发；本工具为独立实现，未使用其代码、图标或素材，也不是它的完整复刻。</p>
+    <div class="footer"><button class="btn primary" id="help-close">知道了</button></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+
+<!--
+  ================================================================
+  第一部分：核心逻辑（纯函数，无 DOM 依赖）
+  可在 Node 中单独加载测试：tests/ 会按 id="mogrid-core" 提取本段脚本并在沙箱中运行。
+  ================================================================
+-->
+<script id="mogrid-core">
+(function (root) {
+  'use strict';
+
+  var FORMAT = 'mogrid-scene';
+  var VERSION = 1;
+  var LIMITS = {
+    nodes: 300, edges: 1000, title: 60, desc: 400, label: 30,
+    fileBytes: 2 * 1024 * 1024, coord: 100000, minW: 140, maxW: 360, defaultW: 200
+  };
+  var ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+  // 节点配色：fill 填充 / stroke 描边 / accent 标题色
+  var PALETTE = {
+    blue:   { fill: '#eef3ff', stroke: '#6b8cf0', accent: '#2f4fc4', name: '蓝' },
+    green:  { fill: '#ecf9f1', stroke: '#4fb37f', accent: '#1f7a4c', name: '绿' },
+    amber:  { fill: '#fff6e5', stroke: '#e3a43b', accent: '#9a5f00', name: '橙' },
+    violet: { fill: '#f4f0ff', stroke: '#9277e6', accent: '#5b3cc4', name: '紫' },
+    rose:   { fill: '#fff0f3', stroke: '#e46a83', accent: '#b02a48', name: '红' },
+    slate:  { fill: '#f7f8fa', stroke: '#9aa3b5', accent: '#334155', name: '灰' }
+  };
+  var COLORS = Object.keys(PALETTE);
+
+  var FONT_STACK = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Segoe UI", Roboto, sans-serif';
+  var STYLE = {
+    pad: 14, minH: 64, gap: 6,
+    titleFont: '600 15px ' + FONT_STACK, titleSize: 15, titleLH: 21, titleMaxLines: 2,
+    descFont: '400 12.5px ' + FONT_STACK, descSize: 12.5, descLH: 18, descMaxLines: 5,
+    descColor: '#5b6474',
+    labelFont: '500 12px ' + FONT_STACK, labelSize: 12, labelPadX: 7, labelH: 20,
+    edgeColor: '#7b8499', arrow: 10, edgeGap: 5, pairOffset: 10
+  };
+
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
+  var idCounter = 0;
+  function uid(prefix) {
+    idCounter = (idCounter + 1) % 1679616;
+    return (prefix || 'id') + '_' + Date.now().toString(36) + idCounter.toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  // ---------- 文本清洗 ----------
+  // 去掉控制字符、零宽字符和双向覆盖字符，统一换行，按“字符”（而不是 UTF-16 单元）截断
+  var CTRL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F​-‏‪-‮⁠-⁩﻿]/g;
+  function cleanTextInfo(v, max, multiline) {
+    if (typeof v !== 'string') return { text: '', truncated: false };
+    var s = v.replace(/\r\n?/g, '\n').replace(/\t/g, ' ').replace(CTRL_RE, '');
+    if (!multiline) s = s.replace(/\n+/g, ' ');
+    else s = s.replace(/\n{3,}/g, '\n\n');
+    s = s.trim();
+    var chars = Array.from(s);
+    var truncated = chars.length > max;
+    if (truncated) s = chars.slice(0, max).join('').trim();
+    return { text: s, truncated: truncated };
+  }
+  function cleanText(v, max, multiline) { return cleanTextInfo(v, max, multiline).text; }
+
+  // ---------- 场景 ----------
+  function emptyScene() { return { nodes: [], edges: [] }; }
+
+  function defaultScene() {
+    return {
+      nodes: [
+        { id: 'n_phone',   x: 0,   y: 0, w: 200, title: '手机',   desc: '用户用自然语言\n发出任务指令', color: 'slate' },
+        { id: 'n_feishu',  x: 300, y: 0, w: 200, title: '飞书',   desc: '消息入口：机器人接收指令、回传结果', color: 'blue' },
+        { id: 'n_agent',   x: 600, y: 0, w: 200, title: 'Agent',  desc: '理解意图 → 拆解步骤 → 调用工具', color: 'violet' },
+        { id: 'n_cloudpc', x: 900, y: 0, w: 200, title: '云电脑', desc: '在隔离的云端桌面中执行操作', color: 'green' }
+      ],
+      edges: [
+        { id: 'e_1', from: 'n_phone',   to: 'n_feishu',  label: '发送指令' },
+        { id: 'e_2', from: 'n_feishu',  to: 'n_agent',   label: '事件推送' },
+        { id: 'e_3', from: 'n_agent',   to: 'n_cloudpc', label: '远程操作' },
+        { id: 'e_4', from: 'n_agent',   to: 'n_feishu',  label: '回复结果' }
+      ]
+    };
+  }
+
+  function findNode(scene, id) {
+    for (var i = 0; i < scene.nodes.length; i++) if (scene.nodes[i].id === id) return scene.nodes[i];
+    return null;
+  }
+
+  function addNode(scene, partial) {
+    if (scene.nodes.length >= LIMITS.nodes) return { ok: false, reason: '节点数量已达上限（' + LIMITS.nodes + '）' };
+    var p = partial || {};
+    var id;
+    do { id = uid('n'); } while (findNode(scene, id));
+    var node = {
+      id: id,
+      x: Math.round(isFinite(p.x) ? p.x : 0),
+      y: Math.round(isFinite(p.y) ? p.y : 0),
+      w: clamp(Math.round(isFinite(p.w) ? p.w : LIMITS.defaultW), LIMITS.minW, LIMITS.maxW),
+      title: cleanText(p.title == null ? '新节点' : p.title, LIMITS.title, false) || '未命名节点',
+      desc: cleanText(p.desc || '', LIMITS.desc, true),
+      color: COLORS.indexOf(p.color) >= 0 ? p.color : 'blue'
+    };
+    scene.nodes.push(node);
+    return { ok: true, node: node };
+  }
+
+  function removeNodes(scene, ids) {
+    var set = {};
+    ids.forEach(function (id) { set[id] = true; });
+    var n0 = scene.nodes.length, e0 = scene.edges.length;
+    scene.nodes = scene.nodes.filter(function (n) { return !set[n.id]; });
+    scene.edges = scene.edges.filter(function (e) { return !set[e.from] && !set[e.to]; });
+    return { nodes: n0 - scene.nodes.length, edges: e0 - scene.edges.length };
+  }
+
+  function edgeExists(scene, from, to, exceptId) {
+    return scene.edges.some(function (e) { return e.from === from && e.to === to && e.id !== exceptId; });
+  }
+
+  function addEdge(scene, from, to, label) {
+    if (!findNode(scene, from) || !findNode(scene, to)) return { ok: false, reason: '起点或终点节点不存在' };
+    if (from === to) return { ok: false, reason: '不能把节点连到它自己' };
+    if (edgeExists(scene, from, to)) return { ok: false, reason: '这两个节点之间已有同方向的连线' };
+    if (scene.edges.length >= LIMITS.edges) return { ok: false, reason: '连线数量已达上限（' + LIMITS.edges + '）' };
+    var id;
+    do { id = uid('e'); } while (scene.edges.some(function (e) { return e.id === id; }));
+    var edge = { id: id, from: from, to: to, label: cleanText(label || '', LIMITS.label, false) };
+    scene.edges.push(edge);
+    return { ok: true, edge: edge };
+  }
+
+  function removeEdge(scene, id) {
+    var n = scene.edges.length;
+    scene.edges = scene.edges.filter(function (e) { return e.id !== id; });
+    return n !== scene.edges.length;
+  }
+
+  function reverseEdge(scene, id) {
+    var e = null;
+    scene.edges.forEach(function (x) { if (x.id === id) e = x; });
+    if (!e) return { ok: false, reason: '连线不存在' };
+    if (edgeExists(scene, e.to, e.from, e.id)) return { ok: false, reason: '反方向的连线已存在' };
+    var t = e.from; e.from = e.to; e.to = t;
+    return { ok: true, edge: e };
+  }
+
+  // ---------- 序列化与校验 ----------
+  function serialize(scene, meta) {
+    var out = { format: FORMAT, version: VERSION, app: 'MoGrid' };
+    if (meta) Object.keys(meta).forEach(function (k) { out[k] = meta[k]; });
+    out.nodes = scene.nodes.map(function (n) {
+      return { id: n.id, x: n.x, y: n.y, w: n.w, title: n.title, desc: n.desc, color: n.color };
+    });
+    out.edges = scene.edges.map(function (e) {
+      return { id: e.id, from: e.from, to: e.to, label: e.label || '' };
+    });
+    return JSON.stringify(out, null, 2);
+  }
+
+  // 严格校验外部数据：结构错误直接拒绝；字段级小问题自动修正并给出警告。
+  // 只读取白名单字段，生成全新的纯数据对象；文本永远作为纯文本渲染，不会被当作 HTML 或脚本执行。
+  function validateScene(input) {
+    var errors = [], warnings = [];
+    var data = input;
+    if (typeof input === 'string') {
+      if (input.length > LIMITS.fileBytes) return fail('文件过大（上限 2 MB）');
+      var text = input.replace(/^﻿/, '');
+      if (!text.trim()) return fail('文件内容为空');
+      try { data = JSON.parse(text); } catch (err) { return fail('不是合法的 JSON：' + String(err && err.message || err).slice(0, 80)); }
+    }
+    if (!isObj(data)) return fail('顶层必须是 JSON 对象');
+    if (data.format !== FORMAT) return fail('不是墨格的场景文件（缺少 "format": "' + FORMAT + '"）');
+    if (typeof data.version !== 'number' || data.version !== Math.floor(data.version) || data.version < 1) return fail('version 字段无效');
+    if (data.version > VERSION) return fail('文件来自更新的版本（v' + data.version + '），当前仅支持 v' + VERSION);
+    if (!Array.isArray(data.nodes)) return fail('nodes 必须是数组');
+    if (data.edges !== undefined && !Array.isArray(data.edges)) return fail('edges 必须是数组');
+    var rawEdges = data.edges || [];
+    if (data.nodes.length > LIMITS.nodes) return fail('节点过多（' + data.nodes.length + ' 个，上限 ' + LIMITS.nodes + '）');
+    if (rawEdges.length > LIMITS.edges) return fail('连线过多（' + rawEdges.length + ' 条，上限 ' + LIMITS.edges + '）');
+
+    var nodes = [], ids = {};
+    data.nodes.forEach(function (n, i) {
+      var where = '第 ' + (i + 1) + ' 个节点';
+      if (!isObj(n)) { errors.push(where + '不是对象'); return; }
+      if (typeof n.id !== 'string' || !ID_RE.test(n.id)) { errors.push(where + '的 id 无效（仅允许字母、数字、_、-，最长 64）'); return; }
+      if (has(ids, n.id)) { errors.push(where + '的 id 重复：' + n.id); return; }
+      if (typeof n.x !== 'number' || typeof n.y !== 'number' || !isFinite(n.x) || !isFinite(n.y)) { errors.push(where + '的坐标 x/y 必须是有限数字'); return; }
+      var x = clamp(Math.round(n.x), -LIMITS.coord, LIMITS.coord);
+      var y = clamp(Math.round(n.y), -LIMITS.coord, LIMITS.coord);
+      if (x !== Math.round(n.x) || y !== Math.round(n.y)) warnings.push(where + '坐标超出范围，已收拢');
+      var w = LIMITS.defaultW;
+      if (n.w !== undefined) {
+        if (typeof n.w === 'number' && isFinite(n.w)) w = clamp(Math.round(n.w), LIMITS.minW, LIMITS.maxW);
+        else warnings.push(where + '宽度无效，已用默认值');
+      }
+      var t = cleanTextInfo(n.title, LIMITS.title, false);
+      var d = cleanTextInfo(n.desc, LIMITS.desc, true);
+      if (t.truncated) warnings.push(where + '标题过长，已截断');
+      if (d.truncated) warnings.push(where + '说明过长，已截断');
+      var color = n.color;
+      if (COLORS.indexOf(color) < 0) {
+        if (color !== undefined) warnings.push(where + '颜色未知，已改为蓝色');
+        color = 'blue';
+      }
+      ids[n.id] = true;
+      nodes.push({ id: n.id, x: x, y: y, w: w, title: t.text || '未命名节点', desc: d.text, color: color });
+    });
+
+    var edges = [], eids = {}, pairs = {};
+    rawEdges.forEach(function (e, i) {
+      var where = '第 ' + (i + 1) + ' 条连线';
+      if (!isObj(e)) { errors.push(where + '不是对象'); return; }
+      if (typeof e.id !== 'string' || !ID_RE.test(e.id)) { errors.push(where + '的 id 无效'); return; }
+      if (has(eids, e.id)) { errors.push(where + '的 id 重复：' + e.id); return; }
+      if (typeof e.from !== 'string' || typeof e.to !== 'string' || !has(ids, e.from) || !has(ids, e.to)) {
+        errors.push(where + '引用了不存在的节点'); return;
+      }
+      if (e.from === e.to) { warnings.push(where + '首尾是同一节点，已忽略'); return; }
+      var key = e.from + '\u0000' + e.to;
+      if (has(pairs, key)) { warnings.push(where + '与已有连线重复，已忽略'); return; }
+      var l = cleanTextInfo(e.label, LIMITS.label, false);
+      if (l.truncated) warnings.push(where + '文字过长，已截断');
+      eids[e.id] = true; pairs[key] = true;
+      edges.push({ id: e.id, from: e.from, to: e.to, label: l.text });
+    });
+
+    if (errors.length) return { ok: false, errors: errors, warnings: warnings };
+    return { ok: true, scene: { nodes: nodes, edges: edges }, errors: [], warnings: warnings };
+
+    function fail(msg) { return { ok: false, errors: [msg], warnings: [] }; }
+  }
+
+  // ---------- 文本排版（中英混排、长文本、省略号） ----------
+  // 中日韩字符逐字可断行；拉丁单词整体换行，超长单词（如 URL）强制按字符断开。
+  var CJK_RE = /[⺀-鿿ꥠ-꥿가-힯豈-﫿︰-﹏＀-￯　-〿]/;
+  // 避头标点：不允许出现在行首，必要时挤进上一行
+  var NO_LINE_START = '，。、；：！？）》」』】〕〉”’…%,.;:!?)]}';
+
+  function tokenize(par) {
+    var tokens = [], buf = '';
+    Array.from(par).forEach(function (ch) {
+      if (CJK_RE.test(ch)) { if (buf) { tokens.push(buf); buf = ''; } tokens.push(ch); }
+      else if (ch === ' ') { buf += ch; tokens.push(buf); buf = ''; }
+      else buf += ch;
+    });
+    if (buf) tokens.push(buf);
+    return tokens;
+  }
+
+  function rtrim(s) { return s.replace(/\s+$/, ''); }
+
+  function wrapParagraph(par, maxWidth, measure) {
+    var out = [], line = '';
+    function fits(s) { return measure(rtrim(s)) <= maxWidth; }
+    tokenize(par).forEach(function (tok) {
+      if (fits(line + tok)) { line += tok; return; }
+      if (line && Array.from(tok).length === 1 && NO_LINE_START.indexOf(tok) >= 0) { line += tok; return; }
+      if (line) { out.push(rtrim(line)); line = ''; }
+      tok = tok.replace(/^\s+/, '');
+      if (fits(tok)) { line = tok; return; }
+      Array.from(tok).forEach(function (ch) {
+        if (line && !fits(line + ch)) { out.push(rtrim(line)); line = ''; }
+        line += ch;
+      });
+    });
+    out.push(rtrim(line));
+    return out;
+  }
+
+  function wrapText(text, maxWidth, measure, maxLines) {
+    var lines = [];
+    String(text || '').split('\n').forEach(function (par) {
+      lines = lines.concat(par ? wrapParagraph(par, maxWidth, measure) : ['']);
+    });
+    var truncated = false;
+    if (maxLines && lines.length > maxLines) {
+      truncated = true;
+      lines = lines.slice(0, maxLines);
+      var last = lines[maxLines - 1];
+      var chars = Array.from(last);
+      while (chars.length && measure(rtrim(chars.join('')) + '…') > maxWidth) chars.pop();
+      lines[maxLines - 1] = rtrim(chars.join('')) + '…';
+    }
+    return { lines: lines, truncated: truncated };
+  }
+
+  // 计算节点尺寸和每行文字的位置（相对节点左上角）；SVG 渲染和 PNG 导出共用这一份结果
+  // measure(text, font) -> 像素宽度
+  function layoutNode(node, measure) {
+    var S = STYLE, w = node.w || LIMITS.defaultW, inner = w - S.pad * 2;
+    var title = wrapText(node.title, inner, function (s) { return measure(s, S.titleFont); }, S.titleMaxLines);
+    var desc = node.desc ? wrapText(node.desc, inner, function (s) { return measure(s, S.descFont); }, S.descMaxLines) : { lines: [], truncated: false };
+    var textH = title.lines.length * S.titleLH + (desc.lines.length ? S.gap + desc.lines.length * S.descLH : 0);
+    var h = Math.max(S.minH, Math.ceil(textH + S.pad * 2));
+    var top = (h - textH) / 2, items = [], pal = PALETTE[node.color] || PALETTE.blue;
+    title.lines.forEach(function (t, i) {
+      // y 为基线位置：行顶 + 半行距 + 字号 * 0.35（视觉居中）
+      items.push({ kind: 'title', text: t, x: w / 2, y: top + i * S.titleLH + S.titleLH / 2 + S.titleSize * 0.35, font: S.titleFont, fill: pal.accent });
+    });
+    var dTop = top + title.lines.length * S.titleLH + S.gap;
+    desc.lines.forEach(function (t, i) {
+      items.push({ kind: 'desc', text: t, x: w / 2, y: dTop + i * S.descLH + S.descLH / 2 + S.descSize * 0.35, font: S.descFont, fill: S.descColor });
+    });
+    return { w: w, h: h, items: items, truncated: title.truncated || desc.truncated };
+  }
+
+  // ---------- 几何 ----------
+  // 从矩形内部一点 (px,py) 沿单位方向 (ux,uy) 射出，返回到达矩形边界的距离
+  function rayToRectEdge(px, py, ux, uy, r) {
+    var tx = ux > 0 ? (r.x + r.w - px) / ux : ux < 0 ? (r.x - px) / ux : Infinity;
+    var ty = uy > 0 ? (r.y + r.h - py) / uy : uy < 0 ? (r.y - py) / uy : Infinity;
+    return Math.max(0, Math.min(tx, ty));
+  }
+
+  // 两矩形之间的连线：端点落在各自边框上（中心连线与边框的交点）。
+  // offset 用于双向连线时向两侧错开；两矩形重叠时返回 null（不绘制）。
+  function edgeGeometry(ra, rb, offset) {
+    var S = STYLE;
+    var ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2, bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+    var dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+    if (len < 1) return null;
+    var ux = dx / len, uy = dy / len, nx = -uy, ny = ux, off = offset || 0;
+    ax += nx * off; ay += ny * off; bx += nx * off; by += ny * off;
+    var ta = rayToRectEdge(ax, ay, ux, uy, ra) + S.edgeGap;
+    var tb = rayToRectEdge(bx, by, -ux, -uy, rb) + S.edgeGap;
+    if (ta + tb + 4 >= len) return null;
+    var x1 = ax + ux * ta, y1 = ay + uy * ta, x2 = bx - ux * tb, y2 = by - uy * tb;
+    var labelShift = off ? (off > 0 ? 14 : -14) : 0;
+    return {
+      x1: x1, y1: y1, x2: x2, y2: y2, ux: ux, uy: uy,
+      mx: (x1 + x2) / 2 + nx * labelShift, my: (y1 + y2) / 2 + ny * labelShift,
+      head: arrowHead(x2, y2, ux, uy, S.arrow),
+      // 线段画到箭头底部，避免线头从箭尖露出
+      lx2: x2 - ux * S.arrow * 0.8, ly2: y2 - uy * S.arrow * 0.8
+    };
+  }
+
+  function arrowHead(x, y, ux, uy, size) {
+    var bx = x - ux * size, by = y - uy * size, nx = -uy * size * 0.55, ny = ux * size * 0.55;
+    return [[x, y], [bx + nx, by + ny], [bx - nx, by - ny]];
+  }
+
+  // 如果存在反方向连线，返回错开量，否则 0
+  function edgeOffset(scene, edge) {
+    return edgeExists(scene, edge.to, edge.from) ? STYLE.pairOffset : 0;
+  }
+
+  function sceneBounds(scene, layouts) {
+    if (!scene.nodes.length) return null;
+    var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    scene.nodes.forEach(function (n) {
+      var l = layouts.get(n.id) || { w: n.w, h: STYLE.minH };
+      x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y);
+      x2 = Math.max(x2, n.x + l.w); y2 = Math.max(y2, n.y + l.h);
+    });
+    return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }
+
+  // 计算把 bounds 放进视口所需的平移和缩放
+  function fitView(bounds, vw, vh, padding, minZoom, maxZoom) {
+    if (!bounds || vw <= 0 || vh <= 0) return { x: vw / 2 || 0, y: vh / 2 || 0, zoom: 1 };
+    var p = padding == null ? 48 : padding;
+    var zoom = Math.min((vw - p * 2) / Math.max(bounds.w, 1), (vh - p * 2) / Math.max(bounds.h, 1));
+    zoom = clamp(zoom, minZoom || 0.2, maxZoom || 1.5);
+    return {
+      x: vw / 2 - (bounds.x + bounds.w / 2) * zoom,
+      y: vh / 2 - (bounds.y + bounds.h / 2) * zoom,
+      zoom: zoom
+    };
+  }
+
+  // ---------- 撤销 / 重做 ----------
+  // 保存的是整个场景的 JSON 快照：简单、可靠，适合几百个节点以内的小图。
+  function createHistory(limit) {
+    var max = limit || 100, past = [], future = [];
+    return {
+      push: function (before) {               // 在一次修改“之后”调用，传入修改前的快照
+        past.push(before);
+        if (past.length > max) past.shift();
+        future = [];
+      },
+      undo: function (current) {
+        if (!past.length) return null;
+        future.push(current);
+        return past.pop();
+      },
+      redo: function (current) {
+        if (!future.length) return null;
+        past.push(current);
+        return future.pop();
+      },
+      canUndo: function () { return past.length > 0; },
+      canRedo: function () { return future.length > 0; },
+      size: function () { return { past: past.length, future: future.length }; },
+      clear: function () { past = []; future = []; }
+    };
+  }
+
+  var api = {
+    FORMAT: FORMAT, VERSION: VERSION, LIMITS: LIMITS, PALETTE: PALETTE, COLORS: COLORS, STYLE: STYLE, FONT_STACK: FONT_STACK,
+    uid: uid, cleanText: cleanText, cleanTextInfo: cleanTextInfo,
+    emptyScene: emptyScene, defaultScene: defaultScene, findNode: findNode,
+    addNode: addNode, removeNodes: removeNodes, addEdge: addEdge, removeEdge: removeEdge, reverseEdge: reverseEdge, edgeExists: edgeExists,
+    serialize: serialize, validateScene: validateScene,
+    tokenize: tokenize, wrapText: wrapText, layoutNode: layoutNode,
+    rayToRectEdge: rayToRectEdge, edgeGeometry: edgeGeometry, arrowHead: arrowHead, edgeOffset: edgeOffset,
+    sceneBounds: sceneBounds, fitView: fitView, createHistory: createHistory
+  };
+  root.MoGridCore = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+
+<!--
+  ================================================================
+  第二部分：界面与交互（依赖 DOM）
+  ================================================================
+-->
+<script id="mogrid-app">
+(function () {
+  'use strict';
+  var C = window.MoGridCore;
+  var STORE_KEY = 'mogrid.scene.v1';
+  var VIEW_KEY = 'mogrid.view.v1';
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var DRAG_THRESHOLD = 4;   // 像素：移动超过它才算拖动，避免点击被误判为拖动
+  var isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+
+  function $(id) { return document.getElementById(id); }
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS(SVGNS, tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  // ---------------- 状态 ----------------
+  var state = {
+    scene: C.emptyScene(),
+    selection: [],          // 选中的节点 id，按点选顺序（决定连线方向）
+    edgeSel: null,          // 选中的连线 id
+    mode: 'select',         // 'select' | 'connect'
+    connectFrom: null,      // 连线模式下已选的起点
+    view: { x: 0, y: 0, zoom: 1 },
+    pointer: null,          // 当前手势
+    rev: 0                  // 撤销/导入等“整体替换”时递增，用于刷新属性面板
+  };
+  var history = C.createHistory(100);
+  var layouts = new Map();
+  var storageOK = true;
+
+  // ---------------- 文字测量 ----------------
+  var measureCtx = document.createElement('canvas').getContext('2d');
+  var measureCache = new Map();
+  function measure(text, font) {
+    var key = font + '|' + text, v = measureCache.get(key);
+    if (v === undefined) {
+      measureCtx.font = font;
+      v = measureCtx.measureText(text).width;
+      if (measureCache.size > 8000) measureCache.clear();
+      measureCache.set(key, v);
+    }
+    return v;
+  }
+  function computeLayouts() {
+    layouts = new Map();
+    state.scene.nodes.forEach(function (n) { layouts.set(n.id, C.layoutNode(n, measure)); });
+  }
+  function rectOf(n) { var l = layouts.get(n.id); return { x: n.x, y: n.y, w: l.w, h: l.h }; }
+
+  // ---------------- 快照 / 修改 ----------------
+  function snapshot() { return JSON.stringify(state.scene); }
+
+  // 所有会修改场景的操作都走这里：自动记录撤销点、保存、重绘
+  function mutate(fn) {
+    var before = snapshot();
+    var result = fn(state.scene);
+    if (snapshot() !== before) {
+      history.push(before);
+      afterChange();
+    }
+    return result;
+  }
+  function afterChange() { render(); scheduleSave(); }
+
+  function restore(snap) {
+    state.scene = JSON.parse(snap);
+    pruneSelection();
+    state.rev++;
+    afterChange();
+  }
+  function pruneSelection() {
+    state.selection = state.selection.filter(function (id) { return C.findNode(state.scene, id); });
+    if (state.edgeSel && !state.scene.edges.some(function (e) { return e.id === state.edgeSel; })) state.edgeSel = null;
+    if (state.connectFrom && !C.findNode(state.scene, state.connectFrom)) state.connectFrom = null;
+  }
+
+  function undo() {
+    commitPendingEdit();
+    var prev = history.undo(snapshot());
+    if (prev === null) { toast('没有可撤销的操作'); return; }
+    restore(prev);
+  }
+  function redo() {
+    commitPendingEdit();
+    var next = history.redo(snapshot());
+    if (next === null) { toast('没有可重做的操作'); return; }
+    restore(next);
+  }
+
+  // ---------------- 渲染 ----------------
+  var board = $('board'), viewport = $('viewport'), edgesLayer = $('edges-layer'), nodesLayer = $('nodes-layer'), rubber = $('rubber');
+
+  function render() {
+    computeLayouts();
+    renderEdges();
+    renderNodes();
+    renderInspector();
+    renderChrome();
+  }
+  // 拖动过程中只重绘画布，不动属性面板，性能更好也不会打断输入
+  function renderBoard() {
+    computeLayouts();
+    renderEdges();
+    renderNodes();
+  }
+
+  function renderEdges() {
+    var frag = document.createDocumentFragment();
+    state.scene.edges.forEach(function (e) {
+      var a = C.findNode(state.scene, e.from), b = C.findNode(state.scene, e.to);
+      if (!a || !b) return;
+      var g = C.edgeGeometry(rectOf(a), rectOf(b), C.edgeOffset(state.scene, e));
+      if (!g) return;
+      var group = svgEl('g', { 'class': 'edge' + (state.edgeSel === e.id ? ' selected' : ''), 'data-edge': e.id });
+      var d = 'M' + g.x1.toFixed(1) + ' ' + g.y1.toFixed(1) + 'L' + g.lx2.toFixed(1) + ' ' + g.ly2.toFixed(1);
+      group.appendChild(svgEl('path', { 'class': 'edge-hit', d: 'M' + g.x1 + ' ' + g.y1 + 'L' + g.x2 + ' ' + g.y2 }));
+      group.appendChild(svgEl('path', { 'class': 'edge-line', d: d }));
+      group.appendChild(svgEl('polygon', { 'class': 'edge-head', points: g.head.map(function (p) { return p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ') }));
+      if (e.label) {
+        var S = C.STYLE, tw = measure(e.label, S.labelFont) + S.labelPadX * 2;
+        group.appendChild(svgEl('rect', { x: g.mx - tw / 2, y: g.my - S.labelH / 2, width: tw, height: S.labelH, rx: 10, fill: '#ffffff', stroke: state.edgeSel === e.id ? '#4f6bed' : '#dfe3ec' }));
+        var t = svgEl('text', { x: g.mx, y: g.my + S.labelSize * 0.35, 'text-anchor': 'middle', fill: '#4b5468', style: 'font:' + S.labelFont });
+        t.textContent = e.label;
+        group.appendChild(t);
+      }
+      frag.appendChild(group);
+    });
+    edgesLayer.replaceChildren(frag);
+  }
+
+  function renderNodes() {
+    var frag = document.createDocumentFragment();
+    var order = state.selection.length === 2 ? state.selection : [];
+    state.scene.nodes.forEach(function (n) {
+      var l = layouts.get(n.id), pal = C.PALETTE[n.color] || C.PALETTE.blue;
+      var selected = state.selection.indexOf(n.id) >= 0;
+      var cls = 'node' + (selected ? ' selected' : '') + (state.pointer && state.pointer.type === 'node' && state.pointer.moved && selected ? ' dragging' : '');
+      var g = svgEl('g', { 'class': cls, 'data-node': n.id, transform: 'translate(' + n.x + ',' + n.y + ')' });
+      var tip = svgEl('title'); tip.textContent = n.title + (n.desc ? '\n' + n.desc : ''); g.appendChild(tip);
+      if (selected || state.connectFrom === n.id) {
+        g.appendChild(svgEl('rect', { x: -5, y: -5, width: l.w + 10, height: l.h + 10, rx: 16, fill: 'none', stroke: '#4f6bed', 'stroke-width': 2, 'stroke-dasharray': state.connectFrom === n.id ? '5 4' : 'none' }));
+      }
+      g.appendChild(svgEl('rect', { width: l.w, height: l.h, rx: 12, fill: pal.fill, stroke: pal.stroke, 'stroke-width': 1.6, filter: 'url(#node-shadow)' }));
+      l.items.forEach(function (it) {
+        var t = svgEl('text', { x: it.x, y: it.y, 'text-anchor': 'middle', fill: it.fill, style: 'font:' + it.font });
+        t.textContent = it.text;   // 始终用 textContent：内容只会被当作文字
+        g.appendChild(t);
+      });
+      var idx = order.indexOf(n.id);
+      if (idx >= 0) {
+        g.appendChild(svgEl('circle', { cx: 0, cy: 0, r: 10, fill: '#4f6bed' }));
+        var num = svgEl('text', { x: 0, y: 4, 'text-anchor': 'middle', fill: '#fff', style: 'font:700 11px ' + C.FONT_STACK });
+        num.textContent = idx === 0 ? '起' : '终';
+        g.appendChild(num);
+      }
+      frag.appendChild(g);
+    });
+    nodesLayer.replaceChildren(frag);
+  }
+
+  function applyView() {
+    var v = state.view;
+    viewport.setAttribute('transform', 'translate(' + v.x + ',' + v.y + ') scale(' + v.zoom + ')');
+    // 点阵背景跟随平移缩放
+    var pat = document.getElementById('dots'), s = 24 * v.zoom;
+    pat.setAttribute('width', s); pat.setAttribute('height', s);
+    pat.setAttribute('x', v.x % s); pat.setAttribute('y', v.y % s);
+    pat.firstElementChild.setAttribute('r', Math.max(0.6, 1.2 * Math.min(v.zoom, 1.4)));
+    $('zoom-label').textContent = Math.round(v.zoom * 100) + '%';
+  }
+
+  function renderChrome() {
+    $('btn-undo').disabled = !history.canUndo();
+    $('btn-redo').disabled = !history.canRedo();
+    $('tool-select').classList.toggle('active', state.mode === 'select');
+    $('tool-connect').classList.toggle('active', state.mode === 'connect');
+    $('tool-delete').disabled = !state.selection.length && !state.edgeSel;
+    board.classList.toggle('connect-mode', state.mode === 'connect');
+    var hint = '';
+    if (state.mode === 'connect') {
+      hint = state.connectFrom ? '连线模式：点击目标节点完成连线 · Esc 退出' : '连线模式：先点击起点节点 · Esc 退出';
+    } else if (state.selection.length === 2) {
+      hint = '已选两个节点：按 L 或点“添加连线”创建 起 → 终 的箭头';
+    } else if (state.selection.length === 1) {
+      hint = 'Shift + 点击另一个节点可多选；拖动可移动；Delete 删除';
+    } else if (state.edgeSel) {
+      hint = '已选择连线：Delete 删除，或在右侧编辑文字 / 反转方向';
+    } else if (!state.scene.nodes.length) {
+      hint = '画布是空的：按 N 或双击空白处新增节点';
+    }
+    $('hint').textContent = hint;
+  }
+
+  // ---------------- 属性面板 ----------------
+  var inspectorKey = '';
+  var pendingEdit = null;   // 正在输入时的“修改前快照”，失焦时写入撤销栈
+
+  function nodeName(id) { var n = C.findNode(state.scene, id); return n ? n.title : '?'; }
+
+  function renderInspector() {
+    var key = state.selection.join(',') + '|' + state.edgeSel + '|' + state.rev;
+    var panels = ['none', 'node', 'pair', 'multi', 'edge'];
+    var show = 'none';
+    if (state.edgeSel) show = 'edge';
+    else if (state.selection.length === 1) show = 'node';
+    else if (state.selection.length === 2) show = 'pair';
+    else if (state.selection.length > 2) show = 'multi';
+    panels.forEach(function (p) { $('panel-' + p).classList.toggle('hidden', p !== show); });
+    $('inspector-title').textContent = { none: '画布', node: '节点', pair: '连接两个节点', multi: '多个节点', edge: '连线' }[show];
+    $('scene-stats').textContent = '当前画布：' + state.scene.nodes.length + ' 个节点，' + state.scene.edges.length + ' 条连线。可撤销 ' + history.size().past + ' 步。';
+    if (key === inspectorKey) return;   // 选择没变：不要覆盖用户正在输入的内容
+    inspectorKey = key;
+
+    if (show === 'node') {
+      var n = C.findNode(state.scene, state.selection[0]);
+      $('node-title').value = n.title;
+      $('node-desc').value = n.desc;
+      $('node-width').value = n.w;
+      updateCounters(n);
+      renderSwatches(n);
+    } else if (show === 'pair') {
+      $('pair-a').textContent = nodeName(state.selection[0]);
+      $('pair-b').textContent = nodeName(state.selection[1]);
+    } else if (show === 'multi') {
+      $('multi-text').textContent = '已选择 ' + state.selection.length + ' 个节点，可一起拖动或删除。连线需要恰好选择两个节点。';
+    } else if (show === 'edge') {
+      var e = state.scene.edges.filter(function (x) { return x.id === state.edgeSel; })[0];
+      $('edge-a').textContent = nodeName(e.from);
+      $('edge-b').textContent = nodeName(e.to);
+      $('edge-label').value = e.label || '';
+      $('label-count').textContent = Array.from(e.label || '').length + '/' + C.LIMITS.label;
+    }
+  }
+
+  function updateCounters(n) {
+    $('title-count').textContent = Array.from(n.title).length + '/' + C.LIMITS.title;
+    $('desc-count').textContent = Array.from(n.desc).length + '/' + C.LIMITS.desc;
+    $('width-value').textContent = n.w + ' px';
+  }
+
+  function renderSwatches(n) {
+    var box = $('swatches');
+    box.replaceChildren();
+    C.COLORS.forEach(function (c) {
+      var p = C.PALETTE[c], b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'swatch' + (n.color === c ? ' active' : '');
+      b.style.background = p.fill;
+      b.style.borderColor = p.stroke;
+      b.title = p.name;
+      b.setAttribute('aria-label', '颜色：' + p.name);
+      b.addEventListener('click', function () {
+        var id = n.id;
+        mutate(function (s) { var t = C.findNode(s, id); if (t) t.color = c; });
+        var cur = C.findNode(state.scene, id);
+        if (cur) renderSwatches(cur);
+      });
+      box.appendChild(b);
+    });
+  }
+
+  // 文本框：输入时实时更新画布，失焦（change）时作为一步写入撤销栈
+  function bindLiveField(el, apply) {
+    el.addEventListener('focus', function () { pendingEdit = snapshot(); });
+    el.addEventListener('input', function () {
+      if (pendingEdit === null) pendingEdit = snapshot();
+      apply(el.value, false);
+      renderBoard();
+      scheduleSave();
+    });
+    el.addEventListener('change', function () { apply(el.value, true); commitPendingEdit(); });
+    el.addEventListener('blur', commitPendingEdit);
+  }
+  function commitPendingEdit() {
+    if (pendingEdit === null) return;
+    var before = pendingEdit;
+    pendingEdit = null;
+    if (snapshot() !== before) {
+      history.push(before);
+      render();
+      scheduleSave();
+    }
+  }
+  function selectedNode() { return state.selection.length === 1 ? C.findNode(state.scene, state.selection[0]) : null; }
+  function selectedEdge() { return state.scene.edges.filter(function (x) { return x.id === state.edgeSel; })[0] || null; }
+
+  bindLiveField($('node-title'), function (v, final) {
+    var n = selectedNode(); if (!n) return;
+    n.title = final ? (C.cleanText(v, C.LIMITS.title, false) || '未命名节点') : Array.from(v.replace(/[\r\n]/g, ' ')).slice(0, C.LIMITS.title).join('');
+    if (final) $('node-title').value = n.title;
+    updateCounters(n);
+  });
+  bindLiveField($('node-desc'), function (v, final) {
+    var n = selectedNode(); if (!n) return;
+    n.desc = final ? C.cleanText(v, C.LIMITS.desc, true) : Array.from(v).slice(0, C.LIMITS.desc).join('');
+    updateCounters(n);
+  });
+  bindLiveField($('node-width'), function (v) {
+    var n = selectedNode(); if (!n) return;
+    n.w = Math.max(C.LIMITS.minW, Math.min(C.LIMITS.maxW, Math.round(Number(v) || C.LIMITS.defaultW)));
+    updateCounters(n);
+  });
+  bindLiveField($('edge-label'), function (v, final) {
+    var e = selectedEdge(); if (!e) return;
+    e.label = final ? C.cleanText(v, C.LIMITS.label, false) : Array.from(v).slice(0, C.LIMITS.label).join('');
+    $('label-count').textContent = Array.from(e.label).length + '/' + C.LIMITS.label;
+  });
+
+  // ---------------- 操作 ----------------
+  function viewCenterWorld() {
+    var r = board.getBoundingClientRect();
+    return toWorld(r.left + r.width / 2, r.top + r.height / 2);
+  }
+  function toWorld(clientX, clientY) {
+    var r = board.getBoundingClientRect(), v = state.view;
+    return { x: (clientX - r.left - v.x) / v.zoom, y: (clientY - r.top - v.y) / v.zoom };
+  }
+
+  function addNodeAt(pt, focus) {
+    var x = Math.round(pt.x - C.LIMITS.defaultW / 2), y = Math.round(pt.y - 36);
+    // 避免与已有节点完全重叠：依次错开
+    for (var i = 0; i < 50 && state.scene.nodes.some(function (n) { return Math.abs(n.x - x) < 12 && Math.abs(n.y - y) < 12; }); i++) { x += 24; y += 24; }
+    var res = mutate(function (s) { return C.addNode(s, { x: x, y: y, title: '新节点', color: 'blue' }); });
+    if (!res.ok) { toast(res.reason, 'error'); return; }
+    state.selection = [res.node.id];
+    state.edgeSel = null;
+    render();
+    if (focus) {
+      openInspectorOnMobile();
+      var input = $('node-title');
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+  }
+
+  function connectSelected() {
+    if (state.selection.length === 2) {
+      createEdge(state.selection[0], state.selection[1]);
+      return;
+    }
+    // 否则进入连线模式：依次点击起点和终点
+    setMode(state.mode === 'connect' ? 'select' : 'connect');
+    if (state.mode === 'connect' && state.selection.length === 1) {
+      state.connectFrom = state.selection[0];
+      render();
+    }
+  }
+
+  function createEdge(from, to) {
+    var res = mutate(function (s) { return C.addEdge(s, from, to, ''); });
+    if (!res.ok) { toast(res.reason, 'error'); return false; }
+    state.selection = [];
+    state.edgeSel = res.edge.id;
+    render();
+    toast('已添加连线：' + nodeName(from) + ' → ' + nodeName(to), 'ok');
+    return true;
+  }
+
+  function deleteSelection() {
+    if (state.edgeSel) {
+      var id = state.edgeSel;
+      mutate(function (s) { C.removeEdge(s, id); });
+      state.edgeSel = null;
+      render();
+      toast('已删除连线（可撤销）');
+    } else if (state.selection.length) {
+      var ids = state.selection.slice();
+      var r = mutate(function (s) { return C.removeNodes(s, ids); });
+      state.selection = [];
+      render();
+      toast('已删除 ' + r.nodes + ' 个节点' + (r.edges ? '、' + r.edges + ' 条相关连线' : '') + '（可撤销）');
+    }
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    state.connectFrom = null;
+    rubber.classList.add('hidden');
+    render();
+  }
+
+  function selectAll() {
+    state.selection = state.scene.nodes.map(function (n) { return n.id; });
+    state.edgeSel = null;
+    render();
+  }
+
+  function replaceScene(scene, message) {
+    var before = snapshot();
+    state.scene = scene;
+    if (snapshot() !== before) history.push(before);
+    state.selection = []; state.edgeSel = null; state.connectFrom = null;
+    state.rev++;
+    afterChange();
+    fitToContent();
+    if (message) toast(message, 'ok');
+  }
+
+  // ---------------- 视图：平移 / 缩放 ----------------
+  function zoomAt(clientX, clientY, factor) {
+    var r = board.getBoundingClientRect(), v = state.view;
+    var nz = Math.max(0.2, Math.min(3, v.zoom * factor));
+    var px = clientX - r.left, py = clientY - r.top;
+    v.x = px - (px - v.x) * (nz / v.zoom);
+    v.y = py - (py - v.y) * (nz / v.zoom);
+    v.zoom = nz;
+    applyView(); saveViewSoon();
+  }
+  function zoomCenter(factor) { var r = board.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor); }
+  function fitToContent() {
+    computeLayouts();
+    var r = board.getBoundingClientRect();
+    var b = C.sceneBounds(state.scene, layouts);
+    var pad = r.width < 500 ? 24 : 72;
+    state.view = b ? C.fitView(b, r.width, r.height, pad, 0.25, 1.25) : { x: r.width / 2, y: r.height / 2, zoom: 1 };
+    applyView(); saveViewSoon();
+  }
+
+  // ---------------- 指针手势 ----------------
+  var pointers = new Map();
+  var DOUBLE_TAP_MS = 350;
+  var lastTap = { t: 0, x: 0, y: 0, id: null };
+
+  board.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return;
+    e.preventDefault();   // 阻止浏览器默认的选字与焦点转移，焦点由我们自己管理
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { board.setPointerCapture(e.pointerId); } catch (_) { /* 忽略 */ }
+    blurInspector();
+
+    if (pointers.size === 2) { startPinch(); return; }
+    if (pointers.size > 2) return;
+
+    var nodeEl = e.target.closest && e.target.closest('[data-node]');
+    var edgeEl = e.target.closest && e.target.closest('[data-edge]');
+    var base = { sx: e.clientX, sy: e.clientY, moved: false };
+
+    if (e.button === 1) { state.pointer = Object.assign(base, { type: 'pan', view: Object.assign({}, state.view) }); return; }
+
+    // 自己识别“双击 / 双击触摸”：重绘会替换 SVG 元素，原生 dblclick 不够可靠
+    var tapId = nodeEl ? nodeEl.getAttribute('data-node') : (edgeEl ? '#edge' : '');
+    var now = Date.now(), last = lastTap;
+    lastTap = { t: now, x: e.clientX, y: e.clientY, id: tapId };
+    if (state.mode === 'select' && now - last.t < DOUBLE_TAP_MS && last.id === tapId &&
+        Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8 && tapId !== '#edge') {
+      lastTap = { t: 0, x: 0, y: 0, id: null };
+      state.pointer = null;
+      onDoubleTap(tapId, e.clientX, e.clientY);
+      return;
+    }
+
+    if (nodeEl) {
+      var id = nodeEl.getAttribute('data-node');
+      if (state.mode === 'connect') {
+        // 连线模式下节点不可拖动，避免误触
+        state.pointer = Object.assign(base, { type: 'connect-click', id: id });
+        return;
+      }
+      var additive = e.shiftKey || e.metaKey || e.ctrlKey;
+      state.edgeSel = null;
+      if (additive) {
+        var i = state.selection.indexOf(id);
+        if (i >= 0) { state.selection.splice(i, 1); render(); state.pointer = null; return; }
+        state.selection.push(id);
+      } else if (state.selection.indexOf(id) < 0) {
+        state.selection = [id];
+      }
+      state.pointer = Object.assign(base, {
+        type: 'node', id: id, additive: additive, before: null,
+        starts: state.selection.map(function (sid) { var n = C.findNode(state.scene, sid); return { id: sid, x: n.x, y: n.y }; })
+      });
+      render();
+      return;
+    }
+    if (edgeEl) {
+      if (state.mode === 'connect') return;
+      state.edgeSel = edgeEl.getAttribute('data-edge');
+      state.selection = [];
+      state.pointer = null;
+      render();
+      return;
+    }
+    state.pointer = Object.assign(base, { type: 'pan', view: Object.assign({}, state.view) });
+  });
+
+  board.addEventListener('pointermove', function (e) {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (state.pointer && state.pointer.type === 'pinch') { movePinch(); return; }
+
+    if (state.mode === 'connect' && state.connectFrom) updateRubber(e.clientX, e.clientY);
+
+    var p = state.pointer;
+    if (!p) return;
+    var dx = e.clientX - p.sx, dy = e.clientY - p.sy;
+    if (!p.moved) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      p.moved = true;
+      if (p.type === 'node') p.before = snapshot();
+      if (p.type === 'pan') board.classList.add('panning');
+    }
+    if (p.type === 'node') {
+      var z = state.view.zoom;
+      p.starts.forEach(function (s) {
+        var n = C.findNode(state.scene, s.id);
+        if (n) { n.x = Math.round(s.x + dx / z); n.y = Math.round(s.y + dy / z); }
+      });
+      renderBoard();
+    } else if (p.type === 'pan') {
+      state.view.x = p.view.x + dx;
+      state.view.y = p.view.y + dy;
+      applyView();
+    }
+  });
+
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    var p = state.pointer;
+    if (p && p.type === 'pinch') { if (pointers.size < 2) { state.pointer = null; saveViewSoon(); } return; }
+    state.pointer = null;
+    board.classList.remove('panning');
+    if (!p || e.type === 'pointercancel' && !p.moved) { return; }
+
+    if (p.type === 'node') {
+      if (p.moved) {
+        if (snapshot() !== p.before) { history.push(p.before); scheduleSave(); }
+        render();
+      } else if (!p.additive && state.selection.length > 1) {
+        state.selection = [p.id];   // 单击多选中的某个节点：只保留它
+        render();
+      }
+    } else if (p.type === 'connect-click' && !p.moved) {
+      handleConnectClick(p.id);
+    } else if (p.type === 'pan') {
+      if (p.moved) saveViewSoon();
+      else {
+        // 单击空白：取消选择
+        state.selection = []; state.edgeSel = null;
+        if (state.mode === 'connect') { state.connectFrom = null; rubber.classList.add('hidden'); }
+        render();
+      }
+    }
+  }
+  board.addEventListener('pointerup', endPointer);
+  board.addEventListener('pointercancel', endPointer);
+
+  function handleConnectClick(id) {
+    if (!state.connectFrom) {
+      state.connectFrom = id;
+      state.selection = [id];
+      render();
+      return;
+    }
+    if (state.connectFrom === id) { toast('不能把节点连到它自己', 'error'); return; }
+    var from = state.connectFrom;
+    state.connectFrom = null;
+    rubber.classList.add('hidden');
+    createEdge(from, id);
+  }
+
+  function updateRubber(clientX, clientY) {
+    var n = C.findNode(state.scene, state.connectFrom);
+    if (!n) return;
+    var l = layouts.get(n.id), w = toWorld(clientX, clientY);
+    rubber.setAttribute('x1', n.x + l.w / 2); rubber.setAttribute('y1', n.y + l.h / 2);
+    rubber.setAttribute('x2', w.x); rubber.setAttribute('y2', w.y);
+    rubber.classList.remove('hidden');
+  }
+
+  function startPinch() {
+    var p = state.pointer;
+    // 若第二根手指按下前已在拖动节点，先把这一步记入历史
+    if (p && p.type === 'node' && p.moved && snapshot() !== p.before) { history.push(p.before); scheduleSave(); }
+    var pts = Array.from(pointers.values());
+    state.pointer = {
+      type: 'pinch', dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+      mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 }, view: Object.assign({}, state.view)
+    };
+  }
+  function movePinch() {
+    var p = state.pointer, pts = Array.from(pointers.values());
+    if (pts.length < 2) return;
+    var dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    var r = board.getBoundingClientRect();
+    var nz = Math.max(0.2, Math.min(3, p.view.zoom * dist / p.dist));
+    var wx = (p.mid.x - r.left - p.view.x) / p.view.zoom, wy = (p.mid.y - r.top - p.view.y) / p.view.zoom;
+    state.view = { x: mid.x - r.left - wx * nz, y: mid.y - r.top - wy * nz, zoom: nz };
+    applyView();
+  }
+
+  // 双击节点：编辑标题；双击空白：在该处新增节点
+  function onDoubleTap(nodeId, clientX, clientY) {
+    if (nodeId) {
+      state.selection = [nodeId];
+      state.edgeSel = null;
+      render();
+      openInspectorOnMobile();
+      $('node-title').focus({ preventScroll: true });
+      $('node-title').select();
+    } else {
+      addNodeAt(toWorld(clientX, clientY), true);
+    }
+  }
+
+  board.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+    } else {
+      state.view.x -= e.deltaX; state.view.y -= e.deltaY;
+      applyView(); saveViewSoon();
+    }
+  }, { passive: false });
+
+  function blurInspector() {
+    var a = document.activeElement;
+    if (a && $('inspector').contains(a)) a.blur();
+  }
+
+  // ---------------- 键盘 ----------------
+  window.addEventListener('keydown', function (e) {
+    var t = e.target;
+    var typing = t && t.closest && t.closest('input, textarea, [contenteditable="true"]');
+    var mod = e.metaKey || e.ctrlKey;
+    var key = (e.key || '').toLowerCase();
+
+    if (key === 'escape') {
+      if (closeModals()) return;
+      if (typing) { t.blur(); return; }
+      if (state.mode === 'connect') setMode('select');
+      else { state.selection = []; state.edgeSel = null; render(); }
+      return;
+    }
+    if (isModalOpen()) return;
+    if (typing) return;   // 输入框内交给浏览器原生撤销等行为
+
+    if (mod && key === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && key === 'y') { e.preventDefault(); redo(); return; }
+    if (mod && key === 'a') { e.preventDefault(); selectAll(); return; }
+    if (mod && key === 's') { e.preventDefault(); saveNow(); toast(storageOK ? '已保存到本机浏览器' : '无法写入本地存储，请导出 JSON 备份', storageOK ? 'ok' : 'error'); return; }
+    if (mod || e.altKey) return;
+
+    if (key === 'delete' || key === 'backspace') { e.preventDefault(); deleteSelection(); }
+    else if (key === 'n') { e.preventDefault(); addNodeAt(viewCenterWorld(), true); }
+    else if (key === 'l') { e.preventDefault(); connectSelected(); }
+    else if (key === 'v') { setMode('select'); }
+    else if (key === 'f') { fitToContent(); }
+    else if (key === '?') { openHelp(); }
+  });
+
+  // ---------------- 本地存储 ----------------
+  var saveTimer = null, viewTimer = null;
+  function setStatus(text, isError) {
+    var el = $('save-status');
+    el.textContent = text;
+    el.classList.toggle('error', !!isError);
+  }
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    setStatus('保存中…');
+    saveTimer = setTimeout(saveNow, 300);
+  }
+  function saveNow() {
+    clearTimeout(saveTimer);
+    try {
+      localStorage.setItem(STORE_KEY, C.serialize(state.scene));
+      storageOK = true;
+      var d = new Date();
+      setStatus('已自动保存到本机浏览器 · ' + [d.getHours(), d.getMinutes(), d.getSeconds()].map(function (x) { return String(x).padStart(2, '0'); }).join(':'));
+    } catch (err) {
+      storageOK = false;
+      setStatus('⚠ 无法写入本地存储（隐私模式或空间已满），请导出 JSON 备份', true);
+    }
+  }
+  function saveViewSoon() {
+    clearTimeout(viewTimer);
+    viewTimer = setTimeout(function () {
+      try { localStorage.setItem(VIEW_KEY, JSON.stringify(state.view)); } catch (_) { /* 视图非关键数据 */ }
+    }, 400);
+  }
+  function loadInitial() {
+    var raw = null;
+    try { raw = localStorage.getItem(STORE_KEY); }
+    catch (err) { storageOK = false; setStatus('⚠ 当前环境禁止使用本地存储，刷新后内容会丢失', true); }
+
+    if (raw) {
+      var r = C.validateScene(raw);
+      if (r.ok) {
+        state.scene = r.scene;
+        setStatus('已从本机浏览器恢复上次的画布');
+        if (r.warnings.length) toast('本地数据有 ' + r.warnings.length + ' 处已自动修正');
+      } else {
+        try { localStorage.setItem(STORE_KEY + '.corrupt', raw); } catch (_) { /* 忽略 */ }
+        state.scene = C.defaultScene();
+        toast('本地数据无法读取，已载入示例。原数据已备份到 ' + STORE_KEY + '.corrupt', 'error');
+      }
+    } else {
+      state.scene = C.defaultScene();
+      if (storageOK) setStatus('首次打开：已载入示例场景');
+    }
+
+    var view = null;
+    try { view = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); } catch (_) { view = null; }
+    computeLayouts();
+    if (raw && view && [view.x, view.y, view.zoom].every(function (v) { return typeof v === 'number' && isFinite(v); }) && view.zoom >= 0.2 && view.zoom <= 3) {
+      state.view = view;
+      applyView();
+    } else {
+      fitToContent();
+    }
+    render();
+    if (!raw && storageOK) saveNow();
+  }
+  window.addEventListener('beforeunload', function () { commitPendingEdit(); if (saveTimer) saveNow(); });
+
+  // ---------------- 导入 / 导出 ----------------
+  function stamp() {
+    var d = new Date(), p = function (x) { return String(x).padStart(2, '0'); };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+  }
+  function download(blob, name) {
+    var url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  function exportJSON() {
+    commitPendingEdit();
+    var text = C.serialize(state.scene, { exportedAt: new Date().toISOString() });
+    download(new Blob([text], { type: 'application/json' }), 'mogrid-' + stamp() + '.json');
+    toast('已导出 JSON（' + state.scene.nodes.length + ' 个节点）', 'ok');
+  }
+
+  function importText(text) {
+    var r = C.validateScene(text);
+    if (!r.ok) {
+      toast('导入失败：' + r.errors.slice(0, 3).join('；') + (r.errors.length > 3 ? ' 等 ' + r.errors.length + ' 个问题' : ''), 'error');
+      return false;
+    }
+    replaceScene(r.scene, '已导入 ' + r.scene.nodes.length + ' 个节点、' + r.scene.edges.length + ' 条连线（可撤销）' + (r.warnings.length ? '；自动修正 ' + r.warnings.length + ' 处' : ''));
+    return true;
+  }
+
+  function importFile(file) {
+    if (!file) return;
+    if (file.size > C.LIMITS.fileBytes) { toast('导入失败：文件过大（上限 2 MB）', 'error'); return; }
+    var reader = new FileReader();
+    reader.onload = function () { importText(String(reader.result || '')); };
+    reader.onerror = function () { toast('导入失败：无法读取文件', 'error'); };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  // PNG：直接用 Canvas 按同一份排版结果重绘（不依赖 SVG 转图片，避免跨浏览器字体/安全限制问题）
+  function renderPNGCanvas(scale) {
+    computeLayouts();
+    var b = C.sceneBounds(state.scene, layouts);
+    if (!b) return null;
+    var pad = 48, W = b.w + pad * 2, H = b.h + pad * 2 + 18;
+    var s = Math.min(scale || 2, 8000 / W, 8000 / H);
+    if (s < 0.25) return null;
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(W * s); canvas.height = Math.ceil(H * s);
+    var ctx = canvas.getContext('2d');
+    ctx.scale(s, s);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.translate(pad - b.x, pad - b.y);
+    var S = C.STYLE;
+
+    state.scene.edges.forEach(function (e) {
+      var a = C.findNode(state.scene, e.from), bb = C.findNode(state.scene, e.to);
+      if (!a || !bb) return;
+      var g = C.edgeGeometry(rectOf(a), rectOf(bb), C.edgeOffset(state.scene, e));
+      if (!g) return;
+      ctx.strokeStyle = S.edgeColor; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(g.x1, g.y1); ctx.lineTo(g.lx2, g.ly2); ctx.stroke();
+      ctx.fillStyle = S.edgeColor;
+      ctx.beginPath(); ctx.moveTo(g.head[0][0], g.head[0][1]); ctx.lineTo(g.head[1][0], g.head[1][1]); ctx.lineTo(g.head[2][0], g.head[2][1]); ctx.closePath(); ctx.fill();
+      if (e.label) {
+        ctx.font = S.labelFont;
+        var tw = ctx.measureText(e.label).width + S.labelPadX * 2;
+        roundRect(ctx, g.mx - tw / 2, g.my - S.labelH / 2, tw, S.labelH, 10);
+        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.strokeStyle = '#dfe3ec'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#4b5468'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText(e.label, g.mx, g.my + S.labelSize * 0.35);
+      }
+    });
+
+    state.scene.nodes.forEach(function (n) {
+      var l = layouts.get(n.id), pal = C.PALETTE[n.color] || C.PALETTE.blue;
+      ctx.save();
+      ctx.translate(n.x, n.y);
+      ctx.shadowColor = 'rgba(20,28,60,0.10)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
+      roundRect(ctx, 0, 0, l.w, l.h, 12);
+      ctx.fillStyle = pal.fill; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = pal.stroke; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      l.items.forEach(function (it) { ctx.font = it.font; ctx.fillStyle = it.fill; ctx.fillText(it.text, it.x, it.y); });
+      ctx.restore();
+    });
+
+    ctx.font = '400 11px ' + C.FONT_STACK;
+    ctx.fillStyle = '#a3aab8'; ctx.textAlign = 'right';
+    ctx.fillText('墨格 MoGrid · 本地生成', b.x + b.w + pad - 12, b.y + b.h + pad + 6);
+    return canvas;
+  }
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+  function exportPNG() {
+    commitPendingEdit();
+    if (!state.scene.nodes.length) { toast('画布是空的，没有可导出的内容', 'error'); return; }
+    var canvas = renderPNGCanvas(2);
+    if (!canvas) { toast('图太大，无法导出 PNG；请先导出 JSON', 'error'); return; }
+    canvas.toBlob(function (blob) {
+      if (!blob) { toast('PNG 生成失败', 'error'); return; }
+      download(blob, 'mogrid-' + stamp() + '.png');
+      toast('已导出 PNG（' + canvas.width + '×' + canvas.height + '）', 'ok');
+    }, 'image/png');
+  }
+
+  // ---------------- 弹窗与提示 ----------------
+  function toast(msg, kind) {
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = msg;
+    $('toasts').appendChild(el);
+    setTimeout(function () { el.remove(); }, kind === 'error' ? 5200 : 2800);
+  }
+
+  var confirmResolve = null;
+  function confirmDialog(title, body, okText) {
+    $('confirm-title').textContent = title;
+    $('confirm-body').textContent = body;
+    $('confirm-ok').textContent = okText || '确认';
+    $('confirm-modal').classList.remove('hidden');
+    $('confirm-cancel').focus();
+    return new Promise(function (resolve) { confirmResolve = resolve; });
+  }
+  function finishConfirm(v) {
+    $('confirm-modal').classList.add('hidden');
+    if (confirmResolve) { var r = confirmResolve; confirmResolve = null; r(v); }
+  }
+  $('confirm-ok').addEventListener('click', function () { finishConfirm(true); });
+  $('confirm-cancel').addEventListener('click', function () { finishConfirm(false); });
+  $('confirm-modal').addEventListener('click', function (e) { if (e.target === $('confirm-modal')) finishConfirm(false); });
+
+  function openHelp() { $('help-modal').classList.remove('hidden'); $('help-close').focus(); }
+  $('help-close').addEventListener('click', function () { $('help-modal').classList.add('hidden'); });
+  $('help-modal').addEventListener('click', function (e) { if (e.target === $('help-modal')) $('help-modal').classList.add('hidden'); });
+  function isModalOpen() { return !$('confirm-modal').classList.contains('hidden') || !$('help-modal').classList.contains('hidden'); }
+  function closeModals() {
+    if (!$('confirm-modal').classList.contains('hidden')) { finishConfirm(false); return true; }
+    if (!$('help-modal').classList.contains('hidden')) { $('help-modal').classList.add('hidden'); return true; }
+    return false;
+  }
+
+  function openInspectorOnMobile() { $('inspector').classList.add('open'); }
+  $('inspector-head').addEventListener('click', function () { $('inspector').classList.toggle('open'); });
+
+  // ---------------- 按钮绑定 ----------------
+  $('btn-undo').addEventListener('click', undo);
+  $('btn-redo').addEventListener('click', redo);
+  $('btn-export-json').addEventListener('click', exportJSON);
+  $('btn-export-png').addEventListener('click', exportPNG);
+  $('btn-import').addEventListener('click', function () { $('file-input').value = ''; $('file-input').click(); });
+  $('file-input').addEventListener('change', function (e) { importFile(e.target.files && e.target.files[0]); });
+  $('btn-help').addEventListener('click', openHelp);
+  $('btn-sample').addEventListener('click', function () {
+    confirmDialog('载入示例场景？', '当前画布会被“手机 → 飞书 → Agent → 云电脑”示例替换。可以用撤销恢复。', '载入示例').then(function (ok) {
+      if (ok) replaceScene(C.defaultScene(), '已载入示例场景（可撤销）');
+    });
+  });
+  $('btn-clear').addEventListener('click', function () {
+    commitPendingEdit();
+    if (!state.scene.nodes.length) { toast('画布已经是空的'); return; }
+    confirmDialog('确定清空整个画布？',
+      '将删除全部 ' + state.scene.nodes.length + ' 个节点和 ' + state.scene.edges.length + ' 条连线，本机自动保存也会随之更新。刷新页面前可以用撤销找回；建议先“导出 JSON”备份。',
+      '确认清空').then(function (ok) {
+      if (ok) { replaceScene(C.emptyScene(), '画布已清空（可撤销）'); }
+    });
+  });
+  $('tool-select').addEventListener('click', function () { setMode('select'); });
+  $('tool-add').addEventListener('click', function () { addNodeAt(viewCenterWorld(), true); });
+  $('tool-connect').addEventListener('click', connectSelected);
+  $('tool-delete').addEventListener('click', deleteSelection);
+  $('node-delete').addEventListener('click', deleteSelection);
+  $('multi-delete').addEventListener('click', deleteSelection);
+  $('edge-delete').addEventListener('click', deleteSelection);
+  $('pair-connect').addEventListener('click', function () { createEdge(state.selection[0], state.selection[1]); });
+  $('pair-swap').addEventListener('click', function () { state.selection.reverse(); inspectorKey = ''; render(); });
+  $('edge-reverse').addEventListener('click', function () {
+    var id = state.edgeSel;
+    var r = mutate(function (s) { return C.reverseEdge(s, id); });
+    if (!r.ok) { toast(r.reason, 'error'); return; }
+    inspectorKey = ''; render();
+  });
+  $('zoom-in').addEventListener('click', function () { zoomCenter(1.2); });
+  $('zoom-out').addEventListener('click', function () { zoomCenter(1 / 1.2); });
+  $('zoom-label').addEventListener('click', function () { zoomCenter(1 / state.view.zoom); });
+  $('zoom-fit').addEventListener('click', fitToContent);
+
+  // 拖放 JSON 文件到画布导入
+  var stage = $('stage'), dragDepth = 0;
+  stage.addEventListener('dragenter', function (e) { e.preventDefault(); dragDepth++; $('drop-overlay').classList.remove('hidden'); });
+  stage.addEventListener('dragover', function (e) { e.preventDefault(); });
+  stage.addEventListener('dragleave', function () { if (--dragDepth <= 0) { dragDepth = 0; $('drop-overlay').classList.add('hidden'); } });
+  stage.addEventListener('drop', function (e) {
+    e.preventDefault(); dragDepth = 0; $('drop-overlay').classList.add('hidden');
+    importFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
+
+  // 快捷键提示按平台显示 ⌘ 或 Ctrl
+  var MOD = isMac ? '⌘' : 'Ctrl';
+  Array.prototype.forEach.call(document.querySelectorAll('.kbd.mod'), function (el) { el.textContent = MOD; });
+  $('btn-undo').title = '撤销 (' + MOD + '+Z)';
+  $('btn-redo').title = '重做 (' + MOD + '+Shift+Z)';
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(applyView, 100); });
+
+  loadInitial();
+
+  // 供本地自动化测试读取状态（只读视图，不影响功能）
+  window.__mogrid = {
+    state: state, history: history, undo: undo, redo: redo, importText: importText,
+    renderPNGCanvas: renderPNGCanvas, exportJSONText: function () { return C.serialize(state.scene); }
+  };
+})();
+</script>
+</body>
+</html>
